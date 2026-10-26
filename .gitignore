@@ -1,0 +1,6 @@
+# AdGuard VPN login, machine ID and client logs
+vpn-data/
+
+# example service data
+config/
+downloads/

@@ -1,0 +1,73 @@
+name: adguard-vpn-gateway
+
+# AdGuard VPN CLI as a gateway container with a kill switch.
+# Every service with  network_mode: "service:vpn"  uses the VPN and nothing else.
+# qBittorrent is included as an example; replace or add your own services the same way.
+services:
+  vpn:
+    image: debian:13-slim
+    container_name: adguard-vpn
+    hostname: adguard-vpn
+    # Keep this MAC fixed: the AdGuard VPN login is bound to it (and to the machine ID in ./vpn-data).
+    # Any locally administered address works, e.g. 02:xx:xx:xx:xx:xx.
+    mac_address: "02:42:ac:11:00:42"
+    entrypoint: ["/bin/sh", "/scripts/entrypoint.sh"]
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    sysctls:
+      - net.ipv6.conf.all.disable_ipv6=1
+    dns:
+      - 9.9.9.9
+      - 149.112.112.112
+    environment:
+      - TZ=Europe/Berlin
+      - LAN_SUBNET=192.168.1.0/24      # your home network; replies to it bypass the tunnel
+      - VPN_LOCATION=                  # empty = fastest server, or a city/country, see "adguardvpn-cli list-locations"
+    volumes:
+      - ./vpn/entrypoint.sh:/scripts/entrypoint.sh:ro
+      - ./vpn-data:/root/.local/share/adguardvpn-cli
+    ports:
+      # Ports of ALL services behind the VPN are published here, on the vpn container.
+      # Bind them to your server's LAN IP instead of 0.0.0.0 if you can.
+      - "8888:8888"                    # qBittorrent web UI
+    healthcheck:
+      test: ["CMD-SHELL", "adguardvpn-cli status 2>/dev/null | grep -q 'Connected to'"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+    restart: unless-stopped
+
+  # Example service behind the VPN. It must NOT run as root (PUID 0),
+  # because the kill switch lets root out without the tunnel.
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:5.2.4
+    container_name: qbittorrent
+    network_mode: "service:vpn"
+    depends_on:
+      vpn:
+        condition: service_healthy
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/Berlin
+      - WEBUI_PORT=8888
+      - TORRENTING_PORT=6888
+    volumes:
+      - ./config:/config
+      - ./downloads:/downloads
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+    restart: unless-stopped
